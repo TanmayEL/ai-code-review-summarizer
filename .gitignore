@@ -1,26 +1,13 @@
 # Python
 __pycache__/
 *.py[cod]
-*$py.class
 *.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
 *.egg
+*.egg-info/
+dist/
+build/
 
-# Virtual Environment
+# Virtual environments
 venv/
 env/
 ENV/
@@ -31,22 +18,24 @@ ENV/
 *.swp
 *.swo
 
-# Project specific
+# Env / secrets
+.env
+
+# Generated data - don't commit these
 data/raw/*
 data/processed/*
+data/rag_index/
 !data/raw/.gitkeep
 !data/processed/.gitkeep
-models/checkpoints/*
-!models/checkpoints/.gitkeep
+!data/raw/sample.json
+
+# Claude Code local settings
+.claude/
 
 # Logs
 *.log
 logs/
-tensorboard_logs/
 
-# Environment variables
-.env
-
-# OS specific
+# OS
 .DS_Store
 Thumbs.db

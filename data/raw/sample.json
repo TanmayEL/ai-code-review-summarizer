@@ -1,0 +1,22 @@
+[
+    {
+        "diff": "diff --git a/src/utils.py b/src/utils.py\nindex 1234567..89abcdef 100644\n--- a/src/utils.py\n+++ b/src/utils.py\n@@ -1,3 +1,4 @@\n def hello():\n-    print(\"Hello\")\n+    print(\"Hello World\")\n+    return True",
+        "title": "Update hello function",
+        "description": "Made the hello function more friendly and added return value",
+        "comments": [
+            "LGTM!",
+            "Maybe add some tests?"
+        ],
+        "summary": "Enhanced hello function with a greeting message and return value"
+    },
+    {
+        "diff": "diff --git a/src/main.py b/src/main.py\nindex abcdef..12345 100644\n--- a/src/main.py\n+++ b/src/main.py\n@@ -10,6 +10,7 @@\n def process_data(data):\n-    result = data * 2\n+    # Add input validation\n+    if not isinstance(data, (int, float)):\n+        raise TypeError(\"Input must be numeric\")\n+    result = float(data) * 2\n     return result",
+        "title": "Add input validation to process_data",
+        "description": "Added type checking to prevent errors with non-numeric inputs",
+        "comments": [
+            "Good catch!",
+            "Should we add more test cases?"
+        ],
+        "summary": "Added input validation to process_data function to handle non-numeric inputs"
+    }
+]

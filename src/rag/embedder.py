@@ -1,62 +1,94 @@
 """
-Very simple embedding helper for RAG stuff.
+Embedding helper for the RAG pipeline.
 
-Right now:
-- just hashes tokens into a fixed size vector
-- later I can swap this with real OpenAI / HF embeddings
+Switched from the old hash trick to sentence-transformers (all-MiniLM-L6-v2).
+MiniLM is small, fast, runs fine on CPU, and produces actually-useful embeddings
+unlike the hash approach which was just a placeholder.
 
+Falls back to hash-based embeddings if sentence-transformers isn't installed,
+so tests still pass in minimal environments.
 """
 
 from __future__ import annotations
+
 import hashlib
+import logging
 from dataclasses import dataclass
-from typing import List
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
 class EmbedConfig:
-    dim: int = 256
+    model_name: str = "all-MiniLM-L6-v2"
+    # dim gets updated automatically once the model loads
+    dim: int = 384
 
 
 class SimpleEmbedder:
     """
-    Idea: for each token, hash it into a random-but-deterministic vector,
-    then average all token vectors. This is obviously not great, but it
-    lets me build + test the whole RAG pipeline.
+    Text embedder backed by sentence-transformers.
+
+    "Simple" is a bit of a misnomer now, but keeping the name
+    so nothing breaks. Might rename to CodeEmbedder later if I
+    switch to a code-specific model (e.g. codet5-embeddings).
     """
 
     def __init__(self, cfg: EmbedConfig | None = None):
         self.cfg = cfg or EmbedConfig()
+        self._model = None
+        self._try_load_model()
+        # expose dim at top level for callers
         self.dim = self.cfg.dim
 
-    def _token_to_vec(self, tok: str) -> np.ndarray:
-        #hash token to get a pseudo-random vector
-        h = hashlib.sha256(tok.encode("utf-8")).digest()
-        #repeat / trim bytes to match dim
-        raw = (h * ((self.dim // len(h)) + 1))[: self.dim]
-        arr = np.frombuffer(raw, dtype=np.uint8).astype("float32")
-        arr = (arr / 127.5) - 1.0
-        return arr
+    def _try_load_model(self) -> None:
+        try:
+            from sentence_transformers import SentenceTransformer
 
-    def embed_text(self, text: str) -> np.ndarray:
-        """
-        Turn a piece of text into a single vector.
+            self._model = SentenceTransformer(self.cfg.model_name)
+            actual_dim = self._model.get_sentence_embedding_dimension()
+            self.cfg.dim = actual_dim
+            logger.info(
+                f"loaded embedding model '{self.cfg.model_name}' "
+                f"(dim={actual_dim})"
+            )
+        except ImportError:
+            logger.warning(
+                "sentence-transformers not installed, using hash-based fallback. "
+                "Install it with: pip install sentence-transformers"
+            )
+            self._model = None
+            self.cfg.dim = 256  # hash-based fallback dim
 
-        NOTE: later I probably want to:
-        - use a real tokenizer
-        - use OpenAI / HF embeddings
-        """
+    def _hash_embed(self, text: str) -> np.ndarray:
+        # old fallback - deterministic but not semantically meaningful
+        dim = self.cfg.dim
         if not text:
-            return np.zeros(self.dim, dtype="float32")
-
-        toks: List[str] = text.split()
-        vecs = [self._token_to_vec(t) for t in toks]
+            return np.zeros(dim, dtype="float32")
+        toks = text.split()
+        vecs = []
+        for tok in toks:
+            h = hashlib.sha256(tok.encode("utf-8")).digest()
+            raw = (h * ((dim // len(h)) + 1))[:dim]
+            arr = np.frombuffer(raw, dtype=np.uint8).astype("float32")
+            vecs.append((arr / 127.5) - 1.0)
         mat = np.stack(vecs, axis=0)
         out = mat.mean(axis=0)
         norm = np.linalg.norm(out) + 1e-8
         return (out / norm).astype("float32")
 
+    def embed_text(self, text: str) -> np.ndarray:
+        if not text:
+            return np.zeros(self.cfg.dim, dtype="float32")
 
+        if self._model is not None:
+            emb = self._model.encode(
+                text,
+                normalize_embeddings=True,
+                show_progress_bar=False,
+            )
+            return emb.astype("float32")
 
+        return self._hash_embed(text)

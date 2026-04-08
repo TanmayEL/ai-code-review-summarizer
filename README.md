@@ -1,144 +1,183 @@
-## Multimodal Code Review Summarizer (Work‑in‑Progress)
+# AI-Powered Code Review Pipeline
 
-This is a side project where I am slowly building a system that can:
+I built this because code review is genuinely painful at scale. You get a 400-line diff, no context, and you are expected to understand what changed, why it changed, and whether it's safe to merge. This tool tries to automate the first part of that: reading the PR, pulling in the surrounding code context, and giving you a structured summary you would actually use.
 
-- Take a **pull request** (PR) – code diff + PR text + comments  
-- Look at both the **text** and a **visual representation** of the diff  
-- Optionally pull in **extra context from the repo** (RAG)  
-- And spit out a **short, human‑style summary** of what changed and why
-
-It iss intentionally not polished “production SaaS”. It is  a realistic research / portfolio project that shows how I think, experiment, and structure code over time.
+Paste any public GitHub PR or commit URL. It fetches the diff, grabs the full content of the files that changed, runs retrieval over them to find the most relevant chunks, and sends everything to Claude. You get a bullet-point summary in a few seconds.
 
 ---
 
-## What’s Done So Far (High‑Level)
-
-- **Phase 1 – Data pipeline (done)**
-  - Clean and process `git diff` text
-  - Turn diffs into simple **images** (color bars for added/removed lines)
-  - Combine PR context (title, description, comments)
-  - Save everything into a `CodeReviewDataset` that PyTorch can use
-
-- **Phase 2 – Multimodal model (in progress)**
-  - Vision Transformer (**ViT**) for diff images
-  - CodeBERT‑style encoder for diff text + PR context
-  - Fusion layer to mix image + text features
-  - Summary head that produces logits (first step toward text summaries)
-
-- **RAG + LLM plumbing – Push 1 (done, mock mode)**
-  - Simple repo index over code files (Python) using local “fake” embeddings
-  - Retriever that grabs related code snippets for a PR
-  - LLM wrapper (currently mocked) + prompt builder for PR summaries
-  - CLI to run the pipeline end‑to‑end without touching any paid API
-
-The idea is: start with a concrete data pipeline + model, then layer in retrieval + LLMs, then later expose everything as an API + UI.
+> **[screenshot — main UI, GitHub URL tab]**
+<img width="1909" height="866" alt="3" src="https://github.com/user-attachments/assets/bce4fb8b-2524-4bd0-90d7-9b0468b595aa" />
 
 ---
 
+## What it does
 
-## Phase 1 – Data Pipeline
-
-### What problem this solves
-
-Models wwant clean, consistent tensors, not random JSON or messy diffs.  
-Phase 1 is about turning “real‑world PR data” into something a model can safely consume.
-
-### Main pieces
-
-- **`src/data/processors.py`**
-  - **`CodeProcessor`**
-    - strips git metadata (`diff --git`, `index`, file headers).
-    - naive whitespace tokenization (good enough for now).
-  - **`DiffImageProcessor`**
-    - builds a simple RGB image where:
-      - `+` lines are green, `-` lines are red, `@` lines are blue, others white.
-      - Each line is a horizontal bar, some text is drawn on top for context.
-  - **`ContextProcessor`**
-    - merges PR title, description, and comments into one string and truncates it to a safe length.
-
-- **`src/data/dataset.py`**
-  - `CodeReviewDataset`:
-    - On init, reads `train.json` or `val.json` from `data/processed/`.
-    - Each item returns a dict with:
-      - `diff_image`: tensor `[C, H, W]` made from the diff.
-      - `diff_text`: cleaned diff string.
-      - `context`: combined PR context string.
-      - `summary`: target summary text (what we eventually want the model to predict).
-
-- **`scripts/prepare_data.py`**
-  - Reads raw `.json` files from `data/raw/` (each entry has `diff`, `title`, `description`, `comments`, `summary`).
-  - Cleans + processes them using the processors above.
-  - Splits into train/val using `train_test_split`.
-  - Writes `data/processed/train.json` and `data/processed/val.json`.
-
-
-## Phase 2 – Multimodal Model (Still Being Built)
-
-### Intuition
-
-The model should look at **both**:
-
-- how the diff looks (rough patterns of additions/deletions), and  
-- what the text says (actual code + descriptions),
-
-then produce a representation we can decode into a summary.
-
-### Components
-
-- **`src/models/vision_transformer.py`**
-  - Implements a mini **Vision Transformer (ViT)** for diff images:
-    - image → patches → embeddings.
-    - standard transformer blocks.
-    - stacks blocks and returns a CLS token vector per image.
-
-- **`src/models/code_bert.py`**
-  - A “BERT‑ish” encoder for **diff text** and **PR context**:
-    - token, position, and segment embeddings.
-    - self‑attention over tokens.
-    - runs both diff text and context through shared blocks and returns one vector for each (mean pooling + small MLP).
-
-- **`src/models/fusion.py`**
-  - **Multimodal fusion**:
-    - allows image features to attend to text features and vice versa.
-    - combines image, diff‑text, and context vectors into one fused representation.
-
-- **`src/models/architecture.py`**
-  - merges everything together
-
-## RAG + LLM Plumbing (Mock Mode)
-
-This part is about connecting PRs to **extra repo context** and then to an **LLM‑style summarizer**, even if the LLM is currently mocked.
-
-- Indexing the repository
-- Retrieving relevant code for a PR
-- Building the LLM prompt
-- LLM client (mock) + summarizer
-
-
-## Tech Stack (What I’m Using)
-
-- **Core ML / DL**: `torch`, custom transformers (no heavy HF wiring yet)
-- **Image stuff**: `opencv-python`, `Pillow`
-- **API / Web (planned)**: `fastapi`, `uvicorn`, `streamlit`
-- **Data / Utils**: `numpy`, `pandas`, `scikit-learn`, `python-dotenv`
-- **Dev tooling**: `pytest`, `black`, `flake8`, `mypy`, `mkdocs` (later)
+- **Fetches PR data automatically** from GitHub: title, description, comments, and the full diff. No copy-pasting.
+- **Retrieves actual file context**: parses the diff to find which files changed, fetches their full content from GitHub at the base commit, and builds a local vector index on the fly. Claude sees the whole file, not just the lines that changed.
+- **Summarizes with Claude**: sends the PR metadata + diff + retrieved context in a structured prompt. Output is 3–6 bullet points covering what changed, why, and anything worth flagging in review.
+- **Two ways to use it**: paste a GitHub URL (easiest), or use the Manual Input tab for private repos or local diffs.
 
 ---
 
-## Roadmap (Rough)
-
-- **Now (done / in progress)**
-  - Data pipeline for PR diffs + context
-  - Multimodal model skeleton (ViT + CodeBERT + fusion)
-  - RAG + LLM mock integration (index → retrieve → prompt → mock LLM)
-
-- **Next (future pushes)**
-  - Swap `SimpleEmbedder` with real embeddings (OpenAI / HF)
-  - Swap `LLMClient` mock with real GPT‑style model
-  - Add **FastAPI** app:
-    - `POST /summarize_pr` → returns summary JSON
-  - Build **Streamlit** UI:
-    - Paste PR / diff → see summary + context
-  - Add caching by commit SHA + small evaluation scripts.
+> **[screenshot — summary output with retrieved context files]**
+<img width="1899" height="864" alt="1" src="https://github.com/user-attachments/assets/1b7b772a-0ba7-4c3d-83f1-de438c23096b" /> 
+<img width="1894" height="862" alt="2" src="https://github.com/user-attachments/assets/d9f13bc3-a98f-48ac-a2f8-cac66809f2ef" />
 
 ---
+
+## How it works
+
+```
+GitHub PR URL
+      ↓
+  GitHubClient
+  ├── fetch PR title, description, comments
+  ├── fetch the diff
+  ├── parse which files changed from the diff
+  └── fetch full content of those files at base commit
+      ↓
+  Build per-request RAG index
+  ├── chunk each file into ~40-line pieces
+  ├── embed with all-MiniLM-L6-v2 (sentence-transformers)
+  └── cosine similarity search → top-5 relevant chunks
+      ↓
+  Build prompt
+  ├── system instruction
+  ├── PR metadata (title, description, comments)
+  ├── diff (truncated if huge)
+  └── retrieved code chunks with file + line references
+      ↓
+  Claude (claude-opus-4-6)
+      ↓
+  Structured bullet-point summary
+```
+
+The key design decision: the RAG index is built fresh per request from the actual files in the PR's repo — not from some pre-built index of an unrelated codebase. So context is always relevant.
+
+---
+
+## Prerequisites
+
+- Python 3.9+
+- An [Anthropic API key](https://console.anthropic.com/) (required)
+- A [GitHub token](https://github.com/settings/tokens) (optional - you get 60 unauthenticated requests/hour, which is fine for occasional use)
+
+---
+
+## Setup
+
+```bash
+# 1. Clone and install
+git clone https://github.com/TanmayEL/multimodal-code-summarizer
+cd multimodal-code-summarizer
+pip install -r requirements.txt
+
+# 2. Configure
+cp .env.example .env
+```
+
+Open `.env` and set your keys:
+
+```
+ANTHROPIC_API_KEY=sk-ant-...
+GITHUB_TOKEN=ghp_...        # optional
+```
+
+```bash
+# 3. Start the API (terminal 1)
+uvicorn src.api.main:app --reload --port 8000
+
+# 4. Start the UI (terminal 2)
+streamlit run app.py
+```
+
+Open **http://localhost:8501**, paste a GitHub PR URL, hit **Summarize**.
+
+---
+
+<!-- Add screenshot: the sidebar with API health check showing "Online | model: claude-opus-4-6" -->
+
+> **[screenshot — sidebar showing API online + model name]**
+<img width="489" height="711" alt="4" src="https://github.com/user-attachments/assets/3ed39705-0c6b-4f5f-8fef-ce1d55128c77" />
+
+---
+
+## Using the API directly
+
+The FastAPI server exposes a single endpoint. You can call it without the UI:
+
+```bash
+# from a GitHub URL
+curl -X POST http://localhost:8000/summarize_pr \
+  -H "Content-Type: application/json" \
+  -d '{"github_url": "https://github.com/django/django/pull/1234"}'
+
+# or paste a raw diff manually
+curl -X POST http://localhost:8000/summarize_pr \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "Fix off-by-one in pagination",
+    "description": "Page count was wrong when total items % page_size == 0",
+    "diff_text": "- pages = total // page_size\n+ pages = math.ceil(total / page_size)"
+  }'
+```
+
+Response shape:
+
+```json
+{
+  "summary": "• Fixed off-by-one bug in pagination...",
+  "title": "Fix off-by-one in pagination",
+  "source_url": "https://github.com/...",
+  "retrieved_files": ["src/pagination.py"],
+  "n_retrieved": 5,
+  "model": "claude-opus-4-6"
+}
+```
+
+Swagger docs at **http://localhost:8000/docs**.
+
+---
+
+## For private repos / local diffs
+
+Use the **Manual Input** tab — paste your diff, title, and description directly. If you want retrieval context for a private repo, pre-build an index from it:
+
+```bash
+python scripts/build_repo_index.py --repo-root /path/to/your/repo
+```
+
+This indexes all `.py` files and saves to `data/rag_index/`. The API picks it up automatically on restart.
+
+---
+
+## Project structure
+
+```
+src/
+  github_client.py    fetch PR/commit data + changed file contents from GitHub
+  rag/                embedder (sentence-transformers), vector index, retriever
+  llm/                Claude client, prompt builder, summarizer orchestrator
+  api/                FastAPI app + Pydantic schemas
+  models/             multimodal model — ViT + CodeBERT + fusion (Phase 2, WIP)
+  data/               data processors + PyTorch dataset
+
+app.py                Streamlit UI
+scripts/              CLI tools (build index, prepare data, run pipeline)
+tests/                pytest suite (runs fully offline, no API key needed)
+```
+
+---
+
+## Tech stack
+
+| Layer            | What                                                 |
+| ---------------- | ---------------------------------------------------- |
+| LLM              | Claude (`claude-opus-4-6`) via Anthropic SDK         |
+| Embeddings       | `all-MiniLM-L6-v2` via sentence-transformers         |
+| Vector search    | In-memory cosine similarity (NumPy)                  |
+| API              | FastAPI + uvicorn                                    |
+| UI               | Streamlit                                            |
+| ML (Phase 2)     | PyTorch — custom ViT + CodeBERT + cross-modal fusion |
+| Image processing | OpenCV + Pillow                                      |
