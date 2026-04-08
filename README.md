@@ -1,144 +1,154 @@
-## Multimodal Code Review Summarizer (Work‑in‑Progress)
+## AI-Powered Code Review Pipeline
 
-This is a side project where I am slowly building a system that can:
+A side project where I'm building a system that:
 
-- Take a **pull request** (PR) – code diff + PR text + comments  
-- Look at both the **text** and a **visual representation** of the diff  
-- Optionally pull in **extra context from the repo** (RAG)  
-- And spit out a **short, human‑style summary** of what changed and why
+- Takes a **pull request** (code diff + title + description + comments)
+- Finds **related code context** from the repo using RAG
+- Sends everything to **Claude** to generate a structured summary
+- Exposes it all via a **FastAPI** backend and a **Streamlit** UI
 
-It iss intentionally not polished “production SaaS”. It is  a realistic research / portfolio project that shows how I think, experiment, and structure code over time.
-
----
-
-## What’s Done So Far (High‑Level)
-
-- **Phase 1 – Data pipeline (done)**
-  - Clean and process `git diff` text
-  - Turn diffs into simple **images** (color bars for added/removed lines)
-  - Combine PR context (title, description, comments)
-  - Save everything into a `CodeReviewDataset` that PyTorch can use
-
-- **Phase 2 – Multimodal model (in progress)**
-  - Vision Transformer (**ViT**) for diff images
-  - CodeBERT‑style encoder for diff text + PR context
-  - Fusion layer to mix image + text features
-  - Summary head that produces logits (first step toward text summaries)
-
-- **RAG + LLM plumbing – Push 1 (done, mock mode)**
-  - Simple repo index over code files (Python) using local “fake” embeddings
-  - Retriever that grabs related code snippets for a PR
-  - LLM wrapper (currently mocked) + prompt builder for PR summaries
-  - CLI to run the pipeline end‑to‑end without touching any paid API
-
-The idea is: start with a concrete data pipeline + model, then layer in retrieval + LLMs, then later expose everything as an API + UI.
+It's intentionally not polished production SaaS. It's a realistic portfolio project
+that shows how I think through system design, experiment, and structure code over time.
 
 ---
 
+## What's in here
 
-## Phase 1 – Data Pipeline
+```
+src/
+  data/         data pipeline (processors, dataset)
+  models/       multimodal model (ViT + CodeBERT + fusion)
+  rag/          embedder, index, retriever
+  llm/          Claude client, prompt builder, summarizer
+  api/          FastAPI app
 
-### What problem this solves
-
-Models wwant clean, consistent tensors, not random JSON or messy diffs.  
-Phase 1 is about turning “real‑world PR data” into something a model can safely consume.
-
-### Main pieces
-
-- **`src/data/processors.py`**
-  - **`CodeProcessor`**
-    - strips git metadata (`diff --git`, `index`, file headers).
-    - naive whitespace tokenization (good enough for now).
-  - **`DiffImageProcessor`**
-    - builds a simple RGB image where:
-      - `+` lines are green, `-` lines are red, `@` lines are blue, others white.
-      - Each line is a horizontal bar, some text is drawn on top for context.
-  - **`ContextProcessor`**
-    - merges PR title, description, and comments into one string and truncates it to a safe length.
-
-- **`src/data/dataset.py`**
-  - `CodeReviewDataset`:
-    - On init, reads `train.json` or `val.json` from `data/processed/`.
-    - Each item returns a dict with:
-      - `diff_image`: tensor `[C, H, W]` made from the diff.
-      - `diff_text`: cleaned diff string.
-      - `context`: combined PR context string.
-      - `summary`: target summary text (what we eventually want the model to predict).
-
-- **`scripts/prepare_data.py`**
-  - Reads raw `.json` files from `data/raw/` (each entry has `diff`, `title`, `description`, `comments`, `summary`).
-  - Cleans + processes them using the processors above.
-  - Splits into train/val using `train_test_split`.
-  - Writes `data/processed/train.json` and `data/processed/val.json`.
-
-
-## Phase 2 – Multimodal Model (Still Being Built)
-
-### Intuition
-
-The model should look at **both**:
-
-- how the diff looks (rough patterns of additions/deletions), and  
-- what the text says (actual code + descriptions),
-
-then produce a representation we can decode into a summary.
-
-### Components
-
-- **`src/models/vision_transformer.py`**
-  - Implements a mini **Vision Transformer (ViT)** for diff images:
-    - image → patches → embeddings.
-    - standard transformer blocks.
-    - stacks blocks and returns a CLS token vector per image.
-
-- **`src/models/code_bert.py`**
-  - A “BERT‑ish” encoder for **diff text** and **PR context**:
-    - token, position, and segment embeddings.
-    - self‑attention over tokens.
-    - runs both diff text and context through shared blocks and returns one vector for each (mean pooling + small MLP).
-
-- **`src/models/fusion.py`**
-  - **Multimodal fusion**:
-    - allows image features to attend to text features and vice versa.
-    - combines image, diff‑text, and context vectors into one fused representation.
-
-- **`src/models/architecture.py`**
-  - merges everything together
-
-## RAG + LLM Plumbing (Mock Mode)
-
-This part is about connecting PRs to **extra repo context** and then to an **LLM‑style summarizer**, even if the LLM is currently mocked.
-
-- Indexing the repository
-- Retrieving relevant code for a PR
-- Building the LLM prompt
-- LLM client (mock) + summarizer
-
-
-## Tech Stack (What I’m Using)
-
-- **Core ML / DL**: `torch`, custom transformers (no heavy HF wiring yet)
-- **Image stuff**: `opencv-python`, `Pillow`
-- **API / Web (planned)**: `fastapi`, `uvicorn`, `streamlit`
-- **Data / Utils**: `numpy`, `pandas`, `scikit-learn`, `python-dotenv`
-- **Dev tooling**: `pytest`, `black`, `flake8`, `mypy`, `mkdocs` (later)
+app.py          Streamlit UI
+scripts/        CLI tools (build index, run pipeline, prepare data)
+data/           raw + processed data, rag index (gitignored)
+tests/          pytest suite
+```
 
 ---
 
-## Roadmap (Rough)
+## Quick start
 
-- **Now (done / in progress)**
-  - Data pipeline for PR diffs + context
-  - Multimodal model skeleton (ViT + CodeBERT + fusion)
-  - RAG + LLM mock integration (index → retrieve → prompt → mock LLM)
+**1. Install deps**
 
-- **Next (future pushes)**
-  - Swap `SimpleEmbedder` with real embeddings (OpenAI / HF)
-  - Swap `LLMClient` mock with real GPT‑style model
-  - Add **FastAPI** app:
-    - `POST /summarize_pr` → returns summary JSON
-  - Build **Streamlit** UI:
-    - Paste PR / diff → see summary + context
-  - Add caching by commit SHA + small evaluation scripts.
+```bash
+pip install -r requirements.txt
+```
+
+**2. Set your API key**
+
+```bash
+cp .env.example .env
+# edit .env and add your ANTHROPIC_API_KEY
+```
+
+**3. Build the RAG index** (indexes the repo's Python files)
+
+```bash
+python scripts/build_repo_index.py --repo-root . --out-dir data/rag_index
+```
+
+**4. Start the API server**
+
+```bash
+uvicorn src.api.main:app --reload --port 8000
+```
+
+**5. Open the UI**
+
+```bash
+streamlit run app.py
+```
+
+Or call the API directly:
+
+```bash
+curl -X POST http://localhost:8000/summarize_pr \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "Fix null check in payment processor",
+    "description": "Was crashing on empty cart",
+    "comments": ["looks good", "add a test?"],
+    "diff_text": "- if total:\n+ if total is not None:"
+  }'
+```
 
 ---
+
+## Components
+
+### Data pipeline (Phase 1 - done)
+
+- `src/data/processors.py` - cleans git diffs, builds diff images (color-coded bars),
+  combines PR context (title + description + comments)
+- `src/data/dataset.py` - PyTorch Dataset wrapping processed PRs
+- `scripts/prepare_data.py` - reads raw JSON, runs processors, splits train/val
+
+### Multimodal model (Phase 2 - in progress)
+
+The model looks at both the visual representation of a diff and the actual text,
+then produces a fused representation that could be decoded into a summary.
+Currently the summary head is a placeholder - the real summarization goes through
+Claude via the RAG+LLM path below.
+
+- `src/models/vision_transformer.py` - mini ViT for diff images (patches → CLS token)
+- `src/models/code_bert.py` - BERT-style encoder for diff text + PR context
+- `src/models/fusion.py` - cross-modal attention to mix image and text features
+- `src/models/architecture.py` - ties everything together
+
+### RAG + LLM pipeline (done)
+
+This is the main working path right now:
+
+1. Build an index over the repo's Python files (`scripts/build_repo_index.py`)
+2. For a given PR, embed the query and retrieve the most relevant chunks
+3. Build a prompt with the PR metadata + diff + retrieved chunks
+4. Send to Claude, get back a bullet-point summary
+
+- `src/rag/embedder.py` - sentence-transformers embeddings (all-MiniLM-L6-v2)
+- `src/rag/index.py` - in-memory cosine similarity index (save/load to disk)
+- `src/rag/retriever.py` - wraps the embedder + index into a retriever
+- `src/llm/client.py` - Anthropic SDK wrapper (falls back to mock if no API key)
+- `src/llm/prompt_builder.py` - assembles the full prompt
+- `src/llm/summarizer.py` - orchestrates the whole flow
+
+### API + UI
+
+- `src/api/main.py` - FastAPI app with `POST /summarize_pr` and `GET /`
+- `app.py` - Streamlit frontend
+
+---
+
+## Tech stack
+
+- **LLM**: Claude (via Anthropic SDK)
+- **Embeddings**: sentence-transformers (all-MiniLM-L6-v2)
+- **ML/DL**: PyTorch, custom transformer implementations
+- **Image processing**: OpenCV, Pillow
+- **API**: FastAPI + uvicorn
+- **UI**: Streamlit
+- **Data**: NumPy, pandas, scikit-learn
+- **Config**: python-dotenv
+
+---
+
+## Running tests
+
+```bash
+pytest tests/ -v
+```
+
+The tests use mock mode for the LLM (no API key needed) and the hash-based
+fallback for embeddings (no sentence-transformers download needed).
+
+---
+
+## What's next
+
+- Swap the simple in-memory index for something like FAISS or ChromaDB
+- Add caching so the same diff doesn't hit Claude twice (by commit SHA)
+- Add a small eval script - compare generated summaries to human-written ones
+- Maybe hook up to GitHub webhooks so it runs automatically on new PRs
