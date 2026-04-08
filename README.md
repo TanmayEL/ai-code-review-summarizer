@@ -1,154 +1,179 @@
-## AI-Powered Code Review Pipeline
+# AI-Powered Code Review Pipeline
 
-A side project where I'm building a system that:
+I built this because code review is genuinely painful at scale. You get a 400-line diff, no context, and you are expected to understand what changed, why it changed, and whether it's safe to merge. This tool tries to automate the first part of that: reading the PR, pulling in the surrounding code context, and giving you a structured summary you would actually use.
 
-- Takes a **pull request** (code diff + title + description + comments)
-- Finds **related code context** from the repo using RAG
-- Sends everything to **Claude** to generate a structured summary
-- Exposes it all via a **FastAPI** backend and a **Streamlit** UI
-
-It's intentionally not polished production SaaS. It's a realistic portfolio project
-that shows how I think through system design, experiment, and structure code over time.
+Paste any public GitHub PR or commit URL. It fetches the diff, grabs the full content of the files that changed, runs retrieval over them to find the most relevant chunks, and sends everything to Claude. You get a bullet-point summary in a few seconds.
 
 ---
 
-## What's in here
-
-```
-src/
-  data/         data pipeline (processors, dataset)
-  models/       multimodal model (ViT + CodeBERT + fusion)
-  rag/          embedder, index, retriever
-  llm/          Claude client, prompt builder, summarizer
-  api/          FastAPI app
-
-app.py          Streamlit UI
-scripts/        CLI tools (build index, run pipeline, prepare data)
-data/           raw + processed data, rag index (gitignored)
-tests/          pytest suite
-```
+> **[screenshot — main UI, GitHub URL tab]**
 
 ---
 
-## Quick start
+## What it does
 
-**1. Install deps**
+- **Fetches PR data automatically** from GitHub: title, description, comments, and the full diff. No copy-pasting.
+- **Retrieves actual file context**: parses the diff to find which files changed, fetches their full content from GitHub at the base commit, and builds a local vector index on the fly. Claude sees the whole file, not just the lines that changed.
+- **Summarizes with Claude**: sends the PR metadata + diff + retrieved context in a structured prompt. Output is 3–6 bullet points covering what changed, why, and anything worth flagging in review.
+- **Two ways to use it**: paste a GitHub URL (easiest), or use the Manual Input tab for private repos or local diffs.
+
+---
+
+> **[screenshot — summary output with retrieved context files]**
+
+---
+
+## How it works
+
+```
+GitHub PR URL
+      ↓
+  GitHubClient
+  ├── fetch PR title, description, comments
+  ├── fetch the diff
+  ├── parse which files changed from the diff
+  └── fetch full content of those files at base commit
+      ↓
+  Build per-request RAG index
+  ├── chunk each file into ~40-line pieces
+  ├── embed with all-MiniLM-L6-v2 (sentence-transformers)
+  └── cosine similarity search → top-5 relevant chunks
+      ↓
+  Build prompt
+  ├── system instruction
+  ├── PR metadata (title, description, comments)
+  ├── diff (truncated if huge)
+  └── retrieved code chunks with file + line references
+      ↓
+  Claude (claude-opus-4-6)
+      ↓
+  Structured bullet-point summary
+```
+
+The key design decision: the RAG index is built fresh per request from the actual files in the PR's repo — not from some pre-built index of an unrelated codebase. So context is always relevant.
+
+---
+
+## Prerequisites
+
+- Python 3.9+
+- An [Anthropic API key](https://console.anthropic.com/) (required)
+- A [GitHub token](https://github.com/settings/tokens) (optional - you get 60 unauthenticated requests/hour, which is fine for occasional use)
+
+---
+
+## Setup
 
 ```bash
+# 1. Clone and install
+git clone https://github.com/TanmayEL/multimodal-code-summarizer
+cd multimodal-code-summarizer
 pip install -r requirements.txt
-```
 
-**2. Set your API key**
-
-```bash
+# 2. Configure
 cp .env.example .env
-# edit .env and add your ANTHROPIC_API_KEY
 ```
 
-**3. Build the RAG index** (indexes the repo's Python files)
+Open `.env` and set your keys:
 
-```bash
-python scripts/build_repo_index.py --repo-root . --out-dir data/rag_index
+```
+ANTHROPIC_API_KEY=sk-ant-...
+GITHUB_TOKEN=ghp_...        # optional
 ```
 
-**4. Start the API server**
-
 ```bash
+# 3. Start the API (terminal 1)
 uvicorn src.api.main:app --reload --port 8000
-```
 
-**5. Open the UI**
-
-```bash
+# 4. Start the UI (terminal 2)
 streamlit run app.py
 ```
 
-Or call the API directly:
-
-```bash
-curl -X POST http://localhost:8000/summarize_pr \
-  -H "Content-Type: application/json" \
-  -d '{
-    "title": "Fix null check in payment processor",
-    "description": "Was crashing on empty cart",
-    "comments": ["looks good", "add a test?"],
-    "diff_text": "- if total:\n+ if total is not None:"
-  }'
-```
+Open **http://localhost:8501**, paste a GitHub PR URL, hit **Summarize**.
 
 ---
 
-## Components
+<!-- Add screenshot: the sidebar with API health check showing "Online | model: claude-opus-4-6" -->
 
-### Data pipeline (Phase 1 - done)
+> **[screenshot — sidebar showing API online + model name]**
 
-- `src/data/processors.py` - cleans git diffs, builds diff images (color-coded bars),
-  combines PR context (title + description + comments)
-- `src/data/dataset.py` - PyTorch Dataset wrapping processed PRs
-- `scripts/prepare_data.py` - reads raw JSON, runs processors, splits train/val
+---
 
-### Multimodal model (Phase 2 - in progress)
+## Using the API directly
 
-The model looks at both the visual representation of a diff and the actual text,
-then produces a fused representation that could be decoded into a summary.
-Currently the summary head is a placeholder - the real summarization goes through
-Claude via the RAG+LLM path below.
+The FastAPI server exposes a single endpoint. You can call it without the UI:
 
-- `src/models/vision_transformer.py` - mini ViT for diff images (patches → CLS token)
-- `src/models/code_bert.py` - BERT-style encoder for diff text + PR context
-- `src/models/fusion.py` - cross-modal attention to mix image and text features
-- `src/models/architecture.py` - ties everything together
+```bash
+# from a GitHub URL
+curl -X POST http://localhost:8000/summarize_pr \
+  -H "Content-Type: application/json" \
+  -d '{"github_url": "https://github.com/django/django/pull/1234"}'
 
-### RAG + LLM pipeline (done)
+# or paste a raw diff manually
+curl -X POST http://localhost:8000/summarize_pr \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "Fix off-by-one in pagination",
+    "description": "Page count was wrong when total items % page_size == 0",
+    "diff_text": "- pages = total // page_size\n+ pages = math.ceil(total / page_size)"
+  }'
+```
 
-This is the main working path right now:
+Response shape:
 
-1. Build an index over the repo's Python files (`scripts/build_repo_index.py`)
-2. For a given PR, embed the query and retrieve the most relevant chunks
-3. Build a prompt with the PR metadata + diff + retrieved chunks
-4. Send to Claude, get back a bullet-point summary
+```json
+{
+  "summary": "• Fixed off-by-one bug in pagination...",
+  "title": "Fix off-by-one in pagination",
+  "source_url": "https://github.com/...",
+  "retrieved_files": ["src/pagination.py"],
+  "n_retrieved": 5,
+  "model": "claude-opus-4-6"
+}
+```
 
-- `src/rag/embedder.py` - sentence-transformers embeddings (all-MiniLM-L6-v2)
-- `src/rag/index.py` - in-memory cosine similarity index (save/load to disk)
-- `src/rag/retriever.py` - wraps the embedder + index into a retriever
-- `src/llm/client.py` - Anthropic SDK wrapper (falls back to mock if no API key)
-- `src/llm/prompt_builder.py` - assembles the full prompt
-- `src/llm/summarizer.py` - orchestrates the whole flow
+Swagger docs at **http://localhost:8000/docs**.
 
-### API + UI
+---
 
-- `src/api/main.py` - FastAPI app with `POST /summarize_pr` and `GET /`
-- `app.py` - Streamlit frontend
+## For private repos / local diffs
+
+Use the **Manual Input** tab — paste your diff, title, and description directly. If you want retrieval context for a private repo, pre-build an index from it:
+
+```bash
+python scripts/build_repo_index.py --repo-root /path/to/your/repo
+```
+
+This indexes all `.py` files and saves to `data/rag_index/`. The API picks it up automatically on restart.
+
+---
+
+## Project structure
+
+```
+src/
+  github_client.py    fetch PR/commit data + changed file contents from GitHub
+  rag/                embedder (sentence-transformers), vector index, retriever
+  llm/                Claude client, prompt builder, summarizer orchestrator
+  api/                FastAPI app + Pydantic schemas
+  models/             multimodal model — ViT + CodeBERT + fusion (Phase 2, WIP)
+  data/               data processors + PyTorch dataset
+
+app.py                Streamlit UI
+scripts/              CLI tools (build index, prepare data, run pipeline)
+tests/                pytest suite (runs fully offline, no API key needed)
+```
 
 ---
 
 ## Tech stack
 
-- **LLM**: Claude (via Anthropic SDK)
-- **Embeddings**: sentence-transformers (all-MiniLM-L6-v2)
-- **ML/DL**: PyTorch, custom transformer implementations
-- **Image processing**: OpenCV, Pillow
-- **API**: FastAPI + uvicorn
-- **UI**: Streamlit
-- **Data**: NumPy, pandas, scikit-learn
-- **Config**: python-dotenv
-
----
-
-## Running tests
-
-```bash
-pytest tests/ -v
-```
-
-The tests use mock mode for the LLM (no API key needed) and the hash-based
-fallback for embeddings (no sentence-transformers download needed).
-
----
-
-## What's next
-
-- Swap the simple in-memory index for something like FAISS or ChromaDB
-- Add caching so the same diff doesn't hit Claude twice (by commit SHA)
-- Add a small eval script - compare generated summaries to human-written ones
-- Maybe hook up to GitHub webhooks so it runs automatically on new PRs
+| Layer            | What                                                 |
+| ---------------- | ---------------------------------------------------- |
+| LLM              | Claude (`claude-opus-4-6`) via Anthropic SDK         |
+| Embeddings       | `all-MiniLM-L6-v2` via sentence-transformers         |
+| Vector search    | In-memory cosine similarity (NumPy)                  |
+| API              | FastAPI + uvicorn                                    |
+| UI               | Streamlit                                            |
+| ML (Phase 2)     | PyTorch — custom ViT + CodeBERT + cross-modal fusion |
+| Image processing | OpenCV + Pillow                                      |

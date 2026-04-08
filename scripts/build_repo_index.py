@@ -1,19 +1,20 @@
 """
-Builds the RAG index over the repo's Python source files.
+Builds a RAG index over a local repo's Python source files.
 
-Run this once (or re-run whenever the codebase changes significantly).
-The index gets saved to disk so the API can load it at startup.
+NOTE: You only need this for the "Manual Input" tab (when you're pasting
+a raw diff without a GitHub URL). When you submit a GitHub URL, the API
+automatically fetches the changed files from that repo and builds a
+fresh index on the fly - no pre-built index needed.
+
+Use this script when:
+  - You're analyzing PRs for a private/local repo
+  - You want to pre-index a specific codebase for faster manual analysis
 
 Usage (from project root):
   python scripts/build_repo_index.py --repo-root . --out-dir data/rag_index
+  python scripts/build_repo_index.py --repo-root /path/to/other/repo
 
-This uses sentence-transformers embeddings now (all-MiniLM-L6-v2),
-which means the first run will download the model (~80MB). Subsequent
-runs are fast since it caches to ~/.cache/torch/sentence_transformers/.
-
-Files indexed:
-  - All *.py files, excluding venv/
-  - Chunked into ~40-line pieces
+First run downloads all-MiniLM-L6-v2 (~80MB). Subsequent runs are fast.
 """
 
 from __future__ import annotations
