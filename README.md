@@ -7,6 +7,7 @@ Paste any public GitHub PR or commit URL. It fetches the diff, grabs the full co
 ---
 
 > **[screenshot — main UI, GitHub URL tab]**
+<img width="1909" height="866" alt="3" src="https://github.com/user-attachments/assets/bce4fb8b-2524-4bd0-90d7-9b0468b595aa" />
 
 ---
 
@@ -20,6 +21,8 @@ Paste any public GitHub PR or commit URL. It fetches the diff, grabs the full co
 ---
 
 > **[screenshot — summary output with retrieved context files]**
+<img width="1899" height="864" alt="1" src="https://github.com/user-attachments/assets/1b7b772a-0ba7-4c3d-83f1-de438c23096b" /> 
+<img width="1894" height="862" alt="2" src="https://github.com/user-attachments/assets/d9f13bc3-a98f-48ac-a2f8-cac66809f2ef" />
 
 ---
 
@@ -96,6 +99,7 @@ Open **http://localhost:8501**, paste a GitHub PR URL, hit **Summarize**.
 <!-- Add screenshot: the sidebar with API health check showing "Online | model: claude-opus-4-6" -->
 
 > **[screenshot — sidebar showing API online + model name]**
+<img width="489" height="711" alt="4" src="https://github.com/user-attachments/assets/3ed39705-0c6b-4f5f-8fef-ce1d55128c77" />
 
 ---
 
